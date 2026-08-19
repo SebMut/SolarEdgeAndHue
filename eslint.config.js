@@ -10,7 +10,12 @@ export default tseslint.config(
     languageOptions: { globals: { crypto: 'readonly', fetch: 'readonly', URL: 'readonly', Response: 'readonly', Request: 'readonly', Headers: 'readonly', TextEncoder: 'readonly', TextDecoder: 'readonly', btoa: 'readonly', atob: 'readonly' } },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-floating-promises': 'off'
+      '@typescript-eslint/no-floating-promises': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^cleanupSessions$' }]
     }
+  },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { URL: 'readonly', console: 'readonly', process: 'readonly' } }
   }
 );

@@ -1,15 +1,17 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function bytesToBase64(bytes: Uint8Array): string {
+function bytesToBase64(bytes: Uint8Array<ArrayBufferLike>): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
 
-function base64ToBytes(value: string): Uint8Array {
+function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 export async function sha256(value: string): Promise<string> {
@@ -59,7 +61,6 @@ export async function verifyPassword(password: string, encoded: string): Promise
   for (let i = 0; i < actual.length; i += 1) diff |= actual[i]! ^ expectedBytes[i]!;
   return diff === 0;
 }
-
 
 export async function secureEqual(a: string, b: string): Promise<boolean> {
   const [ha, hb] = await Promise.all([sha256(a), sha256(b)]);
