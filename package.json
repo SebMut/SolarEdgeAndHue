@@ -1,0 +1,29 @@
+{
+  "name": "solar-edge-and-hue",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "cf:types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests scripts",
+    "test": "vitest run",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "check": "npm run cf:types && npm run typecheck && npm run lint && npm run test && npm run build",
+    "db:migrate:local": "wrangler d1 migrations apply solar-edge-hue --local",
+    "db:migrate:remote": "wrangler d1 migrations apply solar-edge-hue --remote",
+    "deploy": "wrangler deploy",
+    "security:scan": "node scripts/check-no-secrets.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "@eslint/js": "latest",
+    "@types/node": "latest",
+    "eslint": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vitest": "latest",
+    "wrangler": "latest"
+  }
+}

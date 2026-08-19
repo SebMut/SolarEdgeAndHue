@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pool-energy-control",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/oauth/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "solar-edge-hue",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "POOL ENERGY CONTROL",
+    "TIMEZONE": "Europe/Berlin",
+    "HUE_AUTH_URL": "https://api.meethue.com/v2/oauth2/authorize",
+    "HUE_TOKEN_URL": "https://api.meethue.com/v2/oauth2/token",
+    "HUE_API_BASE": "https://api.meethue.com/route"
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "secrets": {
+    "required": ["APP_ENCRYPTION_KEY", "SESSION_SECRET", "SETUP_TOKEN"]
+  }
+}

@@ -1,0 +1,4 @@
+# Niemals echte Werte committen.
+APP_ENCRYPTION_KEY=generate-a-long-random-secret
+SESSION_SECRET=generate-another-long-random-secret
+SETUP_TOKEN=one-time-setup-token
