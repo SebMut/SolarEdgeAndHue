@@ -17,7 +17,6 @@
     "security:scan": "node scripts/check-no-secrets.mjs"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
     "@eslint/js": "latest",
     "@types/node": "latest",
     "eslint": "latest",
