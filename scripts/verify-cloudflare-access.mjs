@@ -16,10 +16,10 @@ function classifyHttp(status) {
 }
 
 async function requestJson(url) {
-  const response = await fetch(url, {
+  const response = await globalThis.fetch(url, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
   });
-  let body = null;
+  let body;
   try { body = await response.json(); } catch { body = null; }
   return { response, body };
 }
@@ -30,7 +30,7 @@ if (!accountId || !token) {
   process.exit(1);
 }
 
-let tokenStatus = 'unknown';
+let tokenStatus;
 let d1Status = 'not-tested';
 
 try {
