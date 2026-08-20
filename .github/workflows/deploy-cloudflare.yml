@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: cloudflare-production
@@ -81,9 +82,50 @@ jobs:
         run: npx wrangler d1 migrations apply solar-edge-hue --remote --config wrangler.deploy.jsonc
 
       - name: Deploy Worker, dashboard and secrets
+        id: deploy
         if: steps.cloudflare.outputs.configured == 'true'
-        run: npx wrangler deploy --config wrangler.deploy.jsonc --secrets-file .cloudflare-secrets.json
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          npx wrangler deploy --config wrangler.deploy.jsonc --secrets-file .cloudflare-secrets.json 2>&1 | tee deploy-output.log
+          code=${PIPESTATUS[0]}
+          url="$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' deploy-output.log | tail -1 || true)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          exit "$code"
 
       - name: Cleanup temporary secret files
         if: always()
         run: rm -f .cloudflare-secrets.json wrangler.deploy.jsonc
+
+      - name: Publish deployment status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          CONFIGURED: ${{ steps.cloudflare.outputs.configured }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          if [ "$CONFIGURED" != "true" ]; then
+            state="error"
+            description="Cloudflare deployment not configured"
+          elif [ "$JOB_STATUS" = "success" ]; then
+            state="success"
+            description="Cloudflare deployment successful"
+          else
+            state="failure"
+            description="Cloudflare deployment failed"
+          fi
+
+          args=(
+            -X POST
+            "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+            -f "state=$state"
+            -f "context=cloudflare/deploy"
+            -f "description=$description"
+          )
+          if [ -n "$DEPLOY_URL" ]; then
+            args+=( -f "target_url=$DEPLOY_URL" )
+          fi
+          gh api "${args[@]}" >/dev/null
