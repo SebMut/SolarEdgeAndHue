@@ -31,22 +31,27 @@ jobs:
         id: cloudflare
         shell: bash
         run: |
-          missing=0
+          missing_names=()
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_ENCRYPTION_KEY SESSION_SECRET SETUP_TOKEN; do
             if [ -z "${!name}" ]; then
               echo "::notice::Cloudflare deployment skipped: GitHub Actions secret ${name} is not configured."
-              missing=1
+              missing_names+=("$name")
             fi
           done
-          if [ "$missing" -eq 0 ]; then
+
+          if [ "${#missing_names[@]}" -eq 0 ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
+            printf -v joined '%s,' "${missing_names[@]}"
+            joined="${joined%,}"
+            echo "missing=$joined" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Cloudflare is not configured yet
         if: steps.cloudflare.outputs.configured != 'true'
-        run: echo "Application code is valid, but production deployment waits for the five documented GitHub Actions secrets."
+        run: echo "Application code is valid, but production deployment waits for the documented GitHub Actions secrets."
 
       - uses: actions/setup-node@v6
         if: steps.cloudflare.outputs.configured == 'true'
@@ -104,28 +109,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
           CONFIGURED: ${{ steps.cloudflare.outputs.configured }}
+          MISSING_SECRETS: ${{ steps.cloudflare.outputs.missing }}
           JOB_STATUS: ${{ job.status }}
         shell: bash
         run: |
-          if [ "$CONFIGURED" != "true" ]; then
-            state="error"
-            description="Cloudflare deployment not configured"
-          elif [ "$JOB_STATUS" = "success" ]; then
-            state="success"
-            description="Cloudflare deployment successful"
-          else
-            state="failure"
-            description="Cloudflare deployment failed"
-          fi
+          publish_status() {
+            local context="$1"
+            local state="$2"
+            local description="$3"
+            local target_url="${4:-}"
+            args=(
+              -X POST
+              "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+              -f "state=$state"
+              -f "context=$context"
+              -f "description=$description"
+            )
+            if [ -n "$target_url" ]; then
+              args+=( -f "target_url=$target_url" )
+            fi
+            gh api "${args[@]}" >/dev/null
+          }
 
-          args=(
-            -X POST
-            "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
-            -f "state=$state"
-            -f "context=cloudflare/deploy"
-            -f "description=$description"
-          )
-          if [ -n "$DEPLOY_URL" ]; then
-            args+=( -f "target_url=$DEPLOY_URL" )
+          if [ "$CONFIGURED" != "true" ]; then
+            publish_status "cloudflare/deploy" "error" "Cloudflare deployment not configured"
+            IFS=',' read -r -a missing <<< "$MISSING_SECRETS"
+            for secret in "${missing[@]}"; do
+              if [ -n "$secret" ]; then
+                publish_status "cloudflare/missing/$secret" "error" "GitHub Actions secret missing"
+              fi
+            done
+          elif [ "$JOB_STATUS" = "success" ]; then
+            publish_status "cloudflare/deploy" "success" "Cloudflare deployment successful" "$DEPLOY_URL"
+          else
+            publish_status "cloudflare/deploy" "failure" "Cloudflare deployment failed" "$DEPLOY_URL"
           fi
-          gh api "${args[@]}" >/dev/null
