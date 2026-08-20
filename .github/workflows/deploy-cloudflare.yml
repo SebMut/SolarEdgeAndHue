@@ -59,6 +59,11 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Verify Cloudflare token and D1 access
+        id: access
+        if: steps.cloudflare.outputs.configured == 'true'
+        run: node scripts/verify-cloudflare-access.mjs
+
       - name: Install dependencies
         id: install
         if: steps.cloudflare.outputs.configured == 'true'
@@ -115,6 +120,9 @@ jobs:
           CONFIGURED: ${{ steps.cloudflare.outputs.configured }}
           MISSING_SECRETS: ${{ steps.cloudflare.outputs.missing }}
           JOB_STATUS: ${{ job.status }}
+          ACCESS_OUTCOME: ${{ steps.access.outcome }}
+          TOKEN_STATUS: ${{ steps.access.outputs.token_status }}
+          D1_ACCESS_STATUS: ${{ steps.access.outputs.d1_status }}
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           QUALITY_OUTCOME: ${{ steps.quality.outcome }}
           D1_OUTCOME: ${{ steps.d1.outcome }}
@@ -151,10 +159,20 @@ jobs:
               fi
             done
           elif [ "$JOB_STATUS" = "success" ]; then
+            publish_status "cloudflare/access/token-$TOKEN_STATUS" "success" "Cloudflare token preflight"
+            publish_status "cloudflare/access/d1-$D1_ACCESS_STATUS" "success" "Cloudflare D1 access preflight"
             publish_status "cloudflare/deploy" "success" "Cloudflare deployment successful" "$DEPLOY_URL"
           else
             publish_status "cloudflare/deploy" "failure" "Cloudflare deployment failed" "$DEPLOY_URL"
-            if [ "$INSTALL_OUTCOME" = "failure" ]; then
+            if [ -n "$TOKEN_STATUS" ]; then
+              publish_status "cloudflare/access/token-$TOKEN_STATUS" "failure" "Cloudflare token preflight"
+            fi
+            if [ -n "$D1_ACCESS_STATUS" ]; then
+              publish_status "cloudflare/access/d1-$D1_ACCESS_STATUS" "failure" "Cloudflare D1 access preflight"
+            fi
+            if [ "$ACCESS_OUTCOME" = "failure" ]; then
+              publish_status "cloudflare/failure/access-preflight" "failure" "Cloudflare access preflight failed"
+            elif [ "$INSTALL_OUTCOME" = "failure" ]; then
               publish_status "cloudflare/failure/npm-install" "failure" "Dependency installation failed"
             elif [ "$QUALITY_OUTCOME" = "failure" ]; then
               publish_status "cloudflare/failure/quality-gate" "failure" "Quality gate failed"
