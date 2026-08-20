@@ -118,6 +118,7 @@ jobs:
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           QUALITY_OUTCOME: ${{ steps.quality.outcome }}
           D1_OUTCOME: ${{ steps.d1.outcome }}
+          D1_ERROR_CODE: ${{ steps.d1.outputs.error_code }}
           WORKER_SECRETS_OUTCOME: ${{ steps.worker_secrets.outcome }}
           MIGRATIONS_OUTCOME: ${{ steps.migrations.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
@@ -159,6 +160,9 @@ jobs:
               publish_status "cloudflare/failure/quality-gate" "failure" "Quality gate failed"
             elif [ "$D1_OUTCOME" = "failure" ]; then
               publish_status "cloudflare/failure/d1-binding" "failure" "D1 prepare/create/list failed"
+              if [ -n "$D1_ERROR_CODE" ]; then
+                publish_status "cloudflare/d1-error/$D1_ERROR_CODE" "failure" "Safe D1 failure category"
+              fi
             elif [ "$WORKER_SECRETS_OUTCOME" = "failure" ]; then
               publish_status "cloudflare/failure/worker-secrets" "failure" "Worker secret preparation failed"
             elif [ "$MIGRATIONS_OUTCOME" = "failure" ]; then
