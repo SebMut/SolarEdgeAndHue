@@ -60,10 +60,12 @@ jobs:
           package-manager-cache: false
 
       - name: Install dependencies
+        id: install
         if: steps.cloudflare.outputs.configured == 'true'
         run: npm install --no-audit --no-fund
 
       - name: Quality gate
+        id: quality
         if: steps.cloudflare.outputs.configured == 'true'
         run: |
           npm run cf:types
@@ -79,10 +81,12 @@ jobs:
         run: node scripts/prepare-cloudflare-deploy.mjs
 
       - name: Prepare Worker secrets
+        id: worker_secrets
         if: steps.cloudflare.outputs.configured == 'true'
         run: node scripts/write-deploy-secrets.mjs
 
       - name: Apply D1 migrations
+        id: migrations
         if: steps.cloudflare.outputs.configured == 'true'
         run: npx wrangler d1 migrations apply solar-edge-hue --remote --config wrangler.deploy.jsonc
 
@@ -101,7 +105,7 @@ jobs:
 
       - name: Cleanup temporary secret files
         if: always()
-        run: rm -f .cloudflare-secrets.json wrangler.deploy.jsonc
+        run: rm -f .cloudflare-secrets.json wrangler.deploy.jsonc deploy-output.log
 
       - name: Publish deployment status
         if: always()
@@ -111,6 +115,12 @@ jobs:
           CONFIGURED: ${{ steps.cloudflare.outputs.configured }}
           MISSING_SECRETS: ${{ steps.cloudflare.outputs.missing }}
           JOB_STATUS: ${{ job.status }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          QUALITY_OUTCOME: ${{ steps.quality.outcome }}
+          D1_OUTCOME: ${{ steps.d1.outcome }}
+          WORKER_SECRETS_OUTCOME: ${{ steps.worker_secrets.outcome }}
+          MIGRATIONS_OUTCOME: ${{ steps.migrations.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
         shell: bash
         run: |
           publish_status() {
@@ -143,4 +153,19 @@ jobs:
             publish_status "cloudflare/deploy" "success" "Cloudflare deployment successful" "$DEPLOY_URL"
           else
             publish_status "cloudflare/deploy" "failure" "Cloudflare deployment failed" "$DEPLOY_URL"
+            if [ "$INSTALL_OUTCOME" = "failure" ]; then
+              publish_status "cloudflare/failure/npm-install" "failure" "Dependency installation failed"
+            elif [ "$QUALITY_OUTCOME" = "failure" ]; then
+              publish_status "cloudflare/failure/quality-gate" "failure" "Quality gate failed"
+            elif [ "$D1_OUTCOME" = "failure" ]; then
+              publish_status "cloudflare/failure/d1-binding" "failure" "D1 prepare/create/list failed"
+            elif [ "$WORKER_SECRETS_OUTCOME" = "failure" ]; then
+              publish_status "cloudflare/failure/worker-secrets" "failure" "Worker secret preparation failed"
+            elif [ "$MIGRATIONS_OUTCOME" = "failure" ]; then
+              publish_status "cloudflare/failure/d1-migrations" "failure" "D1 migration failed"
+            elif [ "$DEPLOY_OUTCOME" = "failure" ]; then
+              publish_status "cloudflare/failure/worker-deploy" "failure" "Worker deployment failed" "$DEPLOY_URL"
+            else
+              publish_status "cloudflare/failure/unknown-stage" "failure" "Deployment failed before a classified stage"
+            fi
           fi
