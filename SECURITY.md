@@ -14,7 +14,7 @@ SolarEdge- und Hue-Zugangsdaten werden über die Weboberfläche an den Worker ü
 
 ## Web-Schutz
 
-- PBKDF2-Passwort-Hash
+- PBKDF2-SHA-256-Passwort-Hash mit 100.000 Iterationen (aktuelles Cloudflare-Workers-Web-Crypto-Limit) und individuellem 128-Bit-Salt
 - gehashte Session-Tokens
 - HttpOnly/Secure/SameSite-Cookie
 - CSRF-Prüfung auf schreibenden Requests
@@ -22,6 +22,7 @@ SolarEdge- und Hue-Zugangsdaten werden über die Weboberfläche an den Worker ü
 - CSP und weitere Security Header
 - keine Cross-Origin-API-Freigabe
 - serverseitige Eingabevalidierung
+- ungültige bzw. über dem Plattformlimit liegende PBKDF2-Work-Faktoren werden vor dem Web-Crypto-Aufruf abgewiesen
 
 ## Gerätesicherheit
 

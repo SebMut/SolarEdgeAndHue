@@ -1,6 +1,11 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+// Cloudflare Workers Web Crypto currently caps PBKDF2 at 100,000 iterations.
+// Keep the encoded work factor explicit so hashes remain self-describing.
+const PBKDF2_ITERATIONS = 100_000;
+const MAX_PBKDF2_ITERATIONS = 100_000;
+
 function bytesToBase64(bytes: Uint8Array<ArrayBufferLike>): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -42,8 +47,12 @@ export async function decryptJson<T>(value: string, secret: string): Promise<T> 
 export async function hashPassword(password: string, salt?: string): Promise<string> {
   const actualSalt = salt ? base64ToBytes(salt) : crypto.getRandomValues(new Uint8Array(16));
   const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: actualSalt, iterations: 210_000 }, material, 256);
-  return `pbkdf2$210000$${bytesToBase64(actualSalt)}$${bytesToBase64(new Uint8Array(bits))}`;
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: actualSalt, iterations: PBKDF2_ITERATIONS },
+    material,
+    256
+  );
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${bytesToBase64(actualSalt)}$${bytesToBase64(new Uint8Array(bits))}`;
 }
 
 export async function verifyPassword(password: string, encoded: string): Promise<boolean> {
@@ -52,6 +61,7 @@ export async function verifyPassword(password: string, encoded: string): Promise
   const [, iterationsText, salt, expected] = parts;
   if (!iterationsText || !salt || !expected) return false;
   const iterations = Number(iterationsText);
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > MAX_PBKDF2_ITERATIONS) return false;
   const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: base64ToBytes(salt), iterations }, material, 256);
   const actual = new Uint8Array(bits);
