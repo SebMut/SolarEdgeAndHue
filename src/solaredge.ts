@@ -162,7 +162,8 @@ export async function refreshSolarEdgeToken(refreshToken: string, clientId: stri
   return tokenSet(token, tokenUrl, config.authorizationUrl, refreshToken);
 }
 
-export function buildSolarEdgeAuthorizationUrl(config: SolarEdgeOAuthConfig, clientId: string, redirectUri: string, state: string): string {
+export function buildSolarEdgeAuthorizationUrl(config: SolarEdgeOAuthConfig, clientId: string | undefined, redirectUri: string, state: string): string {
+  if (!clientId) throw new Error('SolarEdge Client ID fehlt');
   const params = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: redirectUri, state });
   return `${config.authorizationUrl}?${params.toString()}`;
 }
