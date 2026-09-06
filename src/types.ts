@@ -43,6 +43,7 @@ export interface Settings {
   maxGridImportKw: number | null;
   offDelayMinutes: number;
   solarEdgeSiteId: string;
+  solarEdgeSiteName: string;
   panelKwp: number;
   panelTilt: number;
   panelAzimuth: number;
@@ -52,13 +53,26 @@ export interface Settings {
 }
 
 export interface SecretSettings {
+  /** Legacy Monitoring API V1 credential, retained only for a safe migration path. */
   solarEdgeApiKey?: string;
+  solarEdgeClientId?: string;
+  solarEdgeClientSecret?: string;
+  solarEdgeAccessToken?: string;
+  solarEdgeRefreshToken?: string;
+  solarEdgeAccessTokenExpiresAt?: string;
+  solarEdgeAccessTokenScope?: string;
   hueClientId?: string;
   hueClientSecret?: string;
   hueAccessToken?: string;
   hueRefreshToken?: string;
   hueUsername?: string;
   hueAccessTokenExpiresAt?: string;
+}
+
+export interface SolarEdgeSite {
+  id: string;
+  name: string;
+  status?: string;
 }
 
 export interface SolarSnapshot {
