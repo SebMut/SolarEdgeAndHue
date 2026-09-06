@@ -43,6 +43,7 @@ export interface Settings {
   maxGridImportKw: number | null;
   offDelayMinutes: number;
   solarEdgeSiteId: string;
+  solarEdgeSiteName: string;
   panelKwp: number;
   panelTilt: number;
   panelAzimuth: number;
@@ -52,7 +53,16 @@ export interface Settings {
 }
 
 export interface SecretSettings {
+  /** Legacy V1 field kept only so an existing encrypted settings blob can still be decoded. */
   solarEdgeApiKey?: string;
+  solarEdgeClientId?: string;
+  solarEdgeClientSecret?: string;
+  solarEdgeAccessToken?: string;
+  solarEdgeRefreshToken?: string;
+  solarEdgeAccessTokenExpiresAt?: string;
+  solarEdgeOAuthTokenUrl?: string;
+  solarEdgeOAuthAuthorizationUrl?: string;
+  solarEdgeApiBaseUrl?: string;
   hueClientId?: string;
   hueClientSecret?: string;
   hueAccessToken?: string;
