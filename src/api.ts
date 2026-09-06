@@ -6,7 +6,10 @@ import {
   saveEvaluation, saveSecrets, saveSettings, saveSnapshot, setMeta
 } from './db';
 import { buildHueAuthorizationUrl, exchangeHueCode, listHueDevices, refreshHueToken, setHuePower, type HueEnv } from './hue';
-import { fetchSolarEdge } from './solaredge';
+import {
+  acquireSolarEdgeClientToken, buildSolarEdgeAuthorizationUrl, discoverSolarEdgeOAuth, exchangeSolarEdgeCode,
+  fetchSolarEdge, listSolarEdgeSites, refreshSolarEdgeToken, type SolarEdgeTokenSet
+} from './solaredge';
 import { hashPassword, randomToken, secureEqual, securityHeaders, sha256, verifyPassword } from './security';
 import { partsInTimezone, startOfLocalDayIso } from './time';
 import type { DashboardData, EvaluationResult, SecretSettings, Settings, SolarSnapshot, WeatherSnapshot } from './types';
@@ -76,6 +79,8 @@ function validateSettings(input: unknown, current: Settings): Settings {
   if (!Number.isFinite(next.panelTilt) || next.panelTilt < 0 || next.panelTilt > 90) throw new Error('Ungültige Dachneigung');
   if (!Number.isFinite(next.panelAzimuth) || next.panelAzimuth < -180 || next.panelAzimuth > 180) throw new Error('Ungültige Ausrichtung');
   if (!Number.isFinite(next.performanceRatio) || next.performanceRatio < 0.5 || next.performanceRatio > 1) throw new Error('Performance Ratio muss zwischen 0,5 und 1 liegen');
+  if (next.solarEdgeSiteId && next.solarEdgeSiteId.length > 128) throw new Error('Ungültige SolarEdge Site-ID');
+  if (next.solarEdgeSiteName.length > 200) throw new Error('Ungültiger SolarEdge Anlagenname');
   return next;
 }
 
@@ -104,12 +109,76 @@ async function getFreshWeather(env: AppEnv, settings: Settings, force = false): 
   return weather;
 }
 
-async function getFreshSolar(env: AppEnv, settings: Settings, secrets: SecretSettings): Promise<SolarSnapshot | null> {
-  if (!settings.solarEdgeSiteId || !secrets.solarEdgeApiKey) return null;
-  const solar = await fetchSolarEdge(settings.solarEdgeSiteId, secrets.solarEdgeApiKey);
-  await saveSnapshot(env.DB, 'solar', solar);
-  await setMeta(env.DB, 'health_solar', JSON.stringify({ ok: true, message: 'SolarEdge erreichbar', updatedAt: solar.fetchedAt }));
-  return solar;
+function mergeSolarEdgeTokens(secrets: SecretSettings, tokens: SolarEdgeTokenSet, apiBaseUrl?: string): SecretSettings {
+  return {
+    ...secrets,
+    solarEdgeAccessToken: tokens.accessToken,
+    solarEdgeRefreshToken: tokens.refreshToken,
+    solarEdgeAccessTokenExpiresAt: tokens.expiresAt,
+    solarEdgeOAuthTokenUrl: tokens.tokenUrl,
+    solarEdgeOAuthAuthorizationUrl: tokens.authorizationUrl ?? secrets.solarEdgeOAuthAuthorizationUrl,
+    solarEdgeApiBaseUrl: apiBaseUrl ?? secrets.solarEdgeApiBaseUrl
+  };
+}
+
+async function saveSolarEdgeTokens(env: AppEnv, secrets: SecretSettings, tokens: SolarEdgeTokenSet, apiBaseUrl?: string): Promise<SecretSettings> {
+  const merged = mergeSolarEdgeTokens(secrets, tokens, apiBaseUrl);
+  await saveSecrets(env.DB, merged, env.APP_ENCRYPTION_KEY);
+  return merged;
+}
+
+async function ensureSolarEdgeSecrets(env: AppEnv, secrets: SecretSettings): Promise<SecretSettings> {
+  if (!secrets.solarEdgeClientId || !secrets.solarEdgeClientSecret) return secrets;
+  const expiresAt = secrets.solarEdgeAccessTokenExpiresAt ? new Date(secrets.solarEdgeAccessTokenExpiresAt).getTime() : Number.POSITIVE_INFINITY;
+  if (secrets.solarEdgeAccessToken && expiresAt - Date.now() > 5 * 60_000) return secrets;
+
+  if (secrets.solarEdgeRefreshToken) {
+    try {
+      const tokens = await refreshSolarEdgeToken(
+        secrets.solarEdgeRefreshToken,
+        secrets.solarEdgeClientId,
+        secrets.solarEdgeClientSecret,
+        secrets.solarEdgeOAuthTokenUrl,
+        secrets.solarEdgeOAuthAuthorizationUrl
+      );
+      return saveSolarEdgeTokens(env, secrets, tokens);
+    } catch {
+      // Fall through to client_credentials. Interactive authorization remains available in the settings UI.
+    }
+  }
+
+  const tokens = await acquireSolarEdgeClientToken(secrets.solarEdgeClientId, secrets.solarEdgeClientSecret, secrets.solarEdgeOAuthTokenUrl);
+  return saveSolarEdgeTokens(env, secrets, tokens);
+}
+
+async function getFreshSolar(env: AppEnv, settings: Settings, secretsInput: SecretSettings): Promise<SolarSnapshot | null> {
+  if (!settings.solarEdgeSiteId) return null;
+  const secrets = await ensureSolarEdgeSecrets(env, secretsInput);
+  if (!secrets.solarEdgeAccessToken) throw new Error('SolarEdge ONE ist noch nicht verbunden');
+  const result = await fetchSolarEdge(settings.solarEdgeSiteId, secrets.solarEdgeAccessToken, secrets.solarEdgeApiBaseUrl);
+  if (result.apiBaseUrl !== secrets.solarEdgeApiBaseUrl) await saveSecrets(env.DB, { ...secrets, solarEdgeApiBaseUrl: result.apiBaseUrl }, env.APP_ENCRYPTION_KEY);
+  await saveSnapshot(env.DB, 'solar', result.solar);
+  await setMeta(env.DB, 'health_solar', JSON.stringify({ ok: true, message: 'SolarEdge ONE API V2 erreichbar', updatedAt: result.solar.fetchedAt }));
+  return result.solar;
+}
+
+async function getSolarEdgeSites(env: AppEnv, secretsInput: SecretSettings): Promise<{ sites: Array<{ id: string; name: string; status?: string }>; secrets: SecretSettings }> {
+  const secrets = await ensureSolarEdgeSecrets(env, secretsInput);
+  if (!secrets.solarEdgeAccessToken) throw new Error('SolarEdge ONE ist noch nicht verbunden');
+  const result = await listSolarEdgeSites(secrets.solarEdgeAccessToken, secrets.solarEdgeApiBaseUrl);
+  const merged = result.apiBaseUrl === secrets.solarEdgeApiBaseUrl ? secrets : { ...secrets, solarEdgeApiBaseUrl: result.apiBaseUrl };
+  if (merged !== secrets) await saveSecrets(env.DB, merged, env.APP_ENCRYPTION_KEY);
+  return { sites: result.sites, secrets: merged };
+}
+
+async function autoSelectSingleSolarEdgeSite(env: AppEnv, sites: Array<{ id: string; name: string }>): Promise<Settings> {
+  const settings = await getSettings(env.DB);
+  if (!settings.solarEdgeSiteId && sites.length === 1) {
+    settings.solarEdgeSiteId = sites[0]!.id;
+    settings.solarEdgeSiteName = sites[0]!.name;
+    await saveSettings(env.DB, settings);
+  }
+  return settings;
 }
 
 async function ensureHueSecrets(env: AppEnv, secrets: SecretSettings): Promise<SecretSettings> {
@@ -161,7 +230,7 @@ export async function runAutomation(env: AppEnv, options: { simulation?: boolean
     try { solar = await getFreshSolar(env, settings, secrets); }
     catch (error) {
       await setMeta(env.DB, 'health_solar', JSON.stringify({ ok: false, message: error instanceof Error ? error.message : 'SolarEdge-Fehler', updatedAt: now.toISOString() }));
-      await logEvent(env.DB, 'error', 'SolarEdge-Daten konnten nicht geladen werden', { error: String(error) });
+      await logEvent(env.DB, 'error', 'SolarEdge-Daten konnten nicht geladen werden', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -276,6 +345,26 @@ export async function handleApi(request: Request, env: AppEnv): Promise<Response
       return json({ ok: true }, 200, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0` });
     }
 
+    if (url.pathname === '/oauth/solaredge/callback' && request.method === 'GET') {
+      const auth = await requireAuth(request, env, false); if (isResponse(auth)) return auth;
+      const errorCode = url.searchParams.get('error');
+      if (errorCode) return json({ error: `SolarEdge OAuth wurde abgebrochen oder abgelehnt (${errorCode})` }, 400);
+      const state = url.searchParams.get('state'); const code = url.searchParams.get('code');
+      const storedRaw = await getMeta(env.DB, 'solaredge_oauth_state');
+      const stored = storedRaw ? JSON.parse(storedRaw) as { state: string; sessionHash: string; expiresAt: string; redirectUri: string; tokenUrl: string; authorizationUrl: string } : null;
+      if (!state || !code || !stored || new Date(stored.expiresAt).getTime() < Date.now() || !(await secureEqual(state, stored.state)) || !(await secureEqual(await sha256(auth.token), stored.sessionHash))) return json({ error: 'Ungültiger oder abgelaufener SolarEdge OAuth-Callback' }, 400);
+      let secrets = await getSecrets(env.DB, env.APP_ENCRYPTION_KEY);
+      if (!secrets.solarEdgeClientId || !secrets.solarEdgeClientSecret) return json({ error: 'SolarEdge Client-Zugangsdaten fehlen' }, 400);
+      const tokens = await exchangeSolarEdgeCode(code, stored.redirectUri, secrets.solarEdgeClientId, secrets.solarEdgeClientSecret, stored.tokenUrl, stored.authorizationUrl);
+      secrets = await saveSolarEdgeTokens(env, secrets, tokens);
+      const siteResult = await getSolarEdgeSites(env, secrets);
+      await autoSelectSingleSolarEdgeSite(env, siteResult.sites);
+      await setMeta(env.DB, 'solaredge_oauth_state', '');
+      await setMeta(env.DB, 'health_solar', JSON.stringify({ ok: true, message: 'SolarEdge ONE verbunden', updatedAt: new Date().toISOString() }));
+      await logEvent(env.DB, 'solaredge', 'SolarEdge ONE API V2 verbunden', { siteCount: siteResult.sites.length });
+      return Response.redirect(new URL('/?solaredge=connected', request.url).toString(), 302);
+    }
+
     if (url.pathname === '/oauth/hue/callback' && request.method === 'GET') {
       const auth = await requireAuth(request, env, false); if (isResponse(auth)) return auth;
       const state = url.searchParams.get('state'); const code = url.searchParams.get('code');
@@ -305,13 +394,24 @@ export async function handleApi(request: Request, env: AppEnv): Promise<Response
 
     if (url.pathname === '/api/settings' && request.method === 'PUT') {
       const current = await getSettings(env.DB);
-      const body = await parseJson<{ settings?: unknown; secrets?: { solarEdgeApiKey?: string; hueClientId?: string; hueClientSecret?: string } }>(request);
+      const body = await parseJson<{ settings?: unknown; secrets?: { solarEdgeClientId?: string; solarEdgeClientSecret?: string; hueClientId?: string; hueClientSecret?: string } }>(request);
       const next = validateSettings(body.settings, current);
       await saveSettings(env.DB, next);
       if (body.secrets) {
         const stored = await getSecrets(env.DB, env.APP_ENCRYPTION_KEY);
         const merged: SecretSettings = { ...stored };
-        if (body.secrets.solarEdgeApiKey !== undefined && body.secrets.solarEdgeApiKey !== '') merged.solarEdgeApiKey = body.secrets.solarEdgeApiKey;
+        const clientIdChanged = body.secrets.solarEdgeClientId !== undefined && body.secrets.solarEdgeClientId !== '' && body.secrets.solarEdgeClientId !== stored.solarEdgeClientId;
+        const clientSecretChanged = body.secrets.solarEdgeClientSecret !== undefined && body.secrets.solarEdgeClientSecret !== '';
+        if (body.secrets.solarEdgeClientId !== undefined && body.secrets.solarEdgeClientId !== '') merged.solarEdgeClientId = body.secrets.solarEdgeClientId.trim();
+        if (clientSecretChanged) merged.solarEdgeClientSecret = body.secrets.solarEdgeClientSecret;
+        if (clientIdChanged || clientSecretChanged) {
+          merged.solarEdgeAccessToken = undefined;
+          merged.solarEdgeRefreshToken = undefined;
+          merged.solarEdgeAccessTokenExpiresAt = undefined;
+          merged.solarEdgeOAuthTokenUrl = undefined;
+          merged.solarEdgeOAuthAuthorizationUrl = undefined;
+          merged.solarEdgeApiBaseUrl = undefined;
+        }
         if (body.secrets.hueClientId !== undefined && body.secrets.hueClientId !== '') merged.hueClientId = body.secrets.hueClientId;
         if (body.secrets.hueClientSecret !== undefined && body.secrets.hueClientSecret !== '') merged.hueClientSecret = body.secrets.hueClientSecret;
         await saveSecrets(env.DB, merged, env.APP_ENCRYPTION_KEY);
@@ -320,9 +420,52 @@ export async function handleApi(request: Request, env: AppEnv): Promise<Response
       return json({ ok: true, settings: next });
     }
 
+    if (url.pathname === '/api/solaredge/connect' && request.method === 'POST') {
+      let secrets = await getSecrets(env.DB, env.APP_ENCRYPTION_KEY);
+      if (!secrets.solarEdgeClientId || !secrets.solarEdgeClientSecret) return json({ error: 'SolarEdge Client ID und Client Secret zuerst speichern' }, 400);
+
+      try {
+        const tokens = await acquireSolarEdgeClientToken(secrets.solarEdgeClientId, secrets.solarEdgeClientSecret, secrets.solarEdgeOAuthTokenUrl);
+        secrets = await saveSolarEdgeTokens(env, secrets, tokens);
+        const siteResult = await getSolarEdgeSites(env, secrets);
+        const settings = await autoSelectSingleSolarEdgeSite(env, siteResult.sites);
+        await setMeta(env.DB, 'health_solar', JSON.stringify({ ok: true, message: 'SolarEdge ONE verbunden', updatedAt: new Date().toISOString() }));
+        return json({ ok: true, connected: true, sites: siteResult.sites, settings });
+      } catch (clientCredentialsError) {
+        const config = await discoverSolarEdgeOAuth(secrets.solarEdgeOAuthTokenUrl, secrets.solarEdgeOAuthAuthorizationUrl);
+        const state = randomToken(24); const redirectUri = `${url.origin}/oauth/solaredge/callback`;
+        await setMeta(env.DB, 'solaredge_oauth_state', JSON.stringify({
+          state,
+          sessionHash: await sha256(auth.token),
+          expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+          redirectUri,
+          tokenUrl: config.tokenUrl,
+          authorizationUrl: config.authorizationUrl
+        }));
+        await saveSecrets(env.DB, { ...secrets, solarEdgeOAuthTokenUrl: config.tokenUrl, solarEdgeOAuthAuthorizationUrl: config.authorizationUrl }, env.APP_ENCRYPTION_KEY);
+        return json({
+          ok: true,
+          connected: false,
+          requiresAuthorization: true,
+          authorizationUrl: buildSolarEdgeAuthorizationUrl(config, secrets.solarEdgeClientId, redirectUri, state),
+          redirectUri,
+          message: 'SolarEdge verlangt eine Benutzer-/Fleet-Freigabe. Bitte im nächsten Schritt autorisieren.',
+          clientCredentialsStatus: clientCredentialsError instanceof Error ? clientCredentialsError.message : 'nicht verfügbar'
+        });
+      }
+    }
+
+    if (url.pathname === '/api/solaredge/sites' && request.method === 'GET') {
+      const secrets = await getSecrets(env.DB, env.APP_ENCRYPTION_KEY);
+      const result = await getSolarEdgeSites(env, secrets);
+      const settings = await autoSelectSingleSolarEdgeSite(env, result.sites);
+      return json({ sites: result.sites, settings });
+    }
+
     if (url.pathname === '/api/test/solaredge' && request.method === 'POST') {
       const settings = await getSettings(env.DB); const secrets = await getSecrets(env.DB, env.APP_ENCRYPTION_KEY);
-      if (!secrets.solarEdgeApiKey || !settings.solarEdgeSiteId) return json({ error: 'Site-ID oder API-Key fehlt' }, 400);
+      if (!secrets.solarEdgeClientId || !secrets.solarEdgeClientSecret) return json({ error: 'SolarEdge Client ID oder Client Secret fehlt' }, 400);
+      if (!settings.solarEdgeSiteId) return json({ error: 'Bitte zuerst eine SolarEdge-Anlage laden und auswählen' }, 400);
       const solar = await getFreshSolar(env, settings, secrets); return json({ ok: true, solar });
     }
 
