@@ -10,13 +10,29 @@ Cloudflare-Secrets:
 - `SESSION_SECRET`
 - `SETUP_TOKEN`
 
-SolarEdge- und Hue-Zugangsdaten werden über die Weboberfläche an den Worker übertragen und mit AES-GCM verschlüsselt in D1 gespeichert. Der AES-Schlüssel selbst liegt ausschließlich als Cloudflare Secret vor.
+SolarEdge ONE und Philips Hue werden ausschließlich serverseitig angebunden. In D1 werden insbesondere folgende Werte nur AES-GCM-verschlüsselt gespeichert:
+
+- SolarEdge Client Secret
+- SolarEdge OAuth Access-/Refresh-Tokens
+- Hue Client Secret
+- Hue OAuth Access-/Refresh-Tokens
+
+Der AES-Schlüssel selbst liegt ausschließlich als Cloudflare Worker Secret vor. Integrations-Secrets werden nach dem Speichern nicht wieder an das Frontend zurückgegeben. OAuth-/API-Fehler werden vor dem Logging gekürzt und bekannte Token-/Secret-Felder redigiert.
+
+## SolarEdge ONE OAuth
+
+- die Anwendung verwendet SolarEdge API V2 mit OAuth 2.0
+- OAuth-State wird zufällig erzeugt, ist zeitlich begrenzt und an die angemeldete Session gebunden
+- der Callback akzeptiert nur passenden, nicht abgelaufenen State
+- Access-Tokens werden vor Ablauf erneuert, sofern ein Refresh-Token vorhanden ist
+- eine Änderung von SolarEdge Client ID oder Client Secret verwirft vorhandene OAuth-Tokens
+- der alte Monitoring-API-Key wird nicht mehr für neue Verbindungen verwendet
 
 ## Web-Schutz
 
-- PBKDF2-SHA-256-Passwort-Hash mit 100.000 Iterationen (aktuelles Cloudflare-Workers-Web-Crypto-Limit) und individuellem 128-Bit-Salt
+- PBKDF2-SHA-256-Passwort-Hash mit 100.000 Iterationen (Cloudflare-Workers-Web-Crypto-Limit) und individuellem 128-Bit-Salt
 - gehashte Session-Tokens
-- HttpOnly/Secure/SameSite-Cookie
+- `HttpOnly`, `Secure`, `SameSite=Lax` Session-Cookie
 - CSRF-Prüfung auf schreibenden Requests
 - Rate-Limit auf Loginversuche
 - CSP und weitere Security Header
