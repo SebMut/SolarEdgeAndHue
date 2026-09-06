@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxGridImportKw: null,
   offDelayMinutes: 15,
   solarEdgeSiteId: '',
+  solarEdgeSiteName: '',
   panelKwp: 10,
   panelTilt: 30,
   panelAzimuth: 0,
