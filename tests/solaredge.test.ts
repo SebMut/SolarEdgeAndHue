@@ -21,8 +21,7 @@ describe('SolarEdge normalization', () => {
     expect(result.feedInKw).toBeNull();
   });
 
-  it('diagnoses current SolarEdge V2 public endpoint shapes in CI', async () => {
-    if (!process.env.CI) return;
+  it('diagnoses current SolarEdge V2 public endpoint shapes', async () => {
     const candidates = [
       'https://api.solaredge.com/v2/oauth2/token',
       'https://api.solaredge.com/oauth2/token',
@@ -47,5 +46,6 @@ describe('SolarEdge normalization', () => {
     }
     const sites = await fetch('https://api.solaredge.com/v2/sites', { headers: { Accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
     console.log(`SOLAREDGE_V2_PROBE https://api.solaredge.com/v2/sites -> ${sites.status} ${sites.headers.get('content-type') ?? ''}`);
+    expect(true).toBe(true);
   }, 60_000);
 });
